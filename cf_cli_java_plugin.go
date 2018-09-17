@@ -51,7 +51,8 @@ type uuidGeneratorImpl struct {
 }
 
 func (u uuidGeneratorImpl) Generate() string {
-	return guuid.NewV4().String()
+	uuidObject := guuid.Must(guuid.NewV4())
+	return uuidObject.String()
 }
 
 const (
