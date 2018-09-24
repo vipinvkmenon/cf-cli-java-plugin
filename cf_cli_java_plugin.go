@@ -60,6 +60,7 @@ const (
 	JavaDetectionCommand = "if ! pgrep -x \"java\" > /dev/null; then echo \"No 'java' process found running. Are you sure this is a Java app?\" >&2; exit 1; fi"
 	heapDumpCommand      = "heap-dump"
 	threadDumpCommand    = "thread-dump"
+	jcmdCommand          = "jcmd"
 )
 
 // Run must be implemented by any plugin because it is part of the
@@ -126,6 +127,7 @@ func (c *JavaPlugin) execute(commandExecutor cmd.CommandExecutor, uuidGenerator 
 	commandFlags.NewIntFlagWithDefault("app-instance-index", "i", "application `instance` to connect to", -1)
 	commandFlags.NewBoolFlag("keep", "k", "whether to `keep` the heap/thread-dump on the container of the application instance after having downloaded it locally")
 	commandFlags.NewBoolFlag("dry-run", "n", "triggers the `dry-run` mode to show only the cf-ssh command that would have been executed")
+	commandFlags.NewStringFlagWithDefault("command", "c", "commands to pass to jcmd", "help")
 
 	parseErr := commandFlags.Parse(args[1:]...)
 	if parseErr != nil {
@@ -145,12 +147,23 @@ func (c *JavaPlugin) execute(commandExecutor cmd.CommandExecutor, uuidGenerator 
 	command := arguments[0]
 	switch command {
 	case heapDumpCommand:
+		if commandFlags.IsSet("command") {
+			return "", &InvalidUsageError{message: fmt.Sprintf("The flag %q is not supported for heap-dumps", "command")}
+		}
 		break
 	case threadDumpCommand:
 		if commandFlags.IsSet("keep") {
 			return "", &InvalidUsageError{message: fmt.Sprintf("The flag %q is not supported for thread-dumps", "keep")}
 		}
+		if commandFlags.IsSet("command") {
+			return "", &InvalidUsageError{message: fmt.Sprintf("The flag %q is not supported for thread-dumps", "command")}
+		}
 		break
+	case jcmdCommand:
+		if commandFlags.IsSet("keep") {
+			return "", &InvalidUsageError{message: fmt.Sprintf("The flag %q is not supported for jcmd", "keep")}
+		}
+
 	default:
 		return "", &InvalidUsageError{message: fmt.Sprintf("Unrecognized command %q: supported commands are 'heap-dump' and 'thread-dump' (see cf help)", command)}
 	}
@@ -215,6 +228,10 @@ func (c *JavaPlugin) execute(commandExecutor cmd.CommandExecutor, uuidGenerator 
 		remoteCommandTokens = append(remoteCommandTokens, "JSTACK_COMMAND=`find -executable -name jstack | head -1`; if [ -n \"${JSTACK_COMMAND}\" ]; then ${JSTACK_COMMAND} $(pidof java); exit 0; fi")
 		// SAP JVM
 		remoteCommandTokens = append(remoteCommandTokens, "JVMMON_COMMAND=`find -executable -name jvmmon | head -1`; if [ -n \"${JVMMON_COMMAND}\" ]; then ${JVMMON_COMMAND} -pid $(pidof java) -c \"print stacktrace\"; fi")
+	case jcmdCommand:
+		remoteCommandTokens = append(remoteCommandTokens, "JCMD_COMMAND=`find -executable -name jcmd | head -1`; if [ -n \"${JCMD_COMMAND}\" ]; then ${JCMD_COMMAND} $(pidof java) "+commandFlags.String("command")+"; fi")
+		//commandFlags.Parse()
+
 	}
 
 	cfSSHArguments = append(cfSSHArguments, "--command")
@@ -263,16 +280,17 @@ func (c *JavaPlugin) GetMetadata() plugin.PluginMetadata {
 		Commands: []plugin.Command{
 			{
 				Name:     "java",
-				HelpText: "Obtain a heap-dump or thread-dump from a running, Diego-enabled, SSH-enabled Java application.",
+				HelpText: "Obtain a heap-dump or thread-dump from a running, Diego-enabled, SSH-enabled Java application. The utility can also be used to run commands of jcmd",
 
 				// UsageDetails is optional
 				// It is used to show help of usage of each command
 				UsageDetails: plugin.Usage{
-					Usage: "cf java [" + heapDumpCommand + "|" + threadDumpCommand + "] APP_NAME",
+					Usage: "cf java [" + heapDumpCommand + "|" + threadDumpCommand + "|" + jcmdCommand + "] APP_NAME",
 					Options: map[string]string{
 						"app-instance-index": "-i [index], select to which instance of the app to connect",
 						"keep":               "-k, keep the heap dump in the container; by default the heap dump will be deleted from the container's filesystem after been downloaded",
 						"dry-run":            "-n, just output to command line what would be executed",
+						"command":            "-c, command to be passed to be executed by jcmd ",
 					},
 				},
 			},
